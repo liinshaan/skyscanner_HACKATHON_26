@@ -1,0 +1,6 @@
+{
+  "name": "Sky Vision AI",
+  "description": "An AI-powered travel discovery engine where your imagination generates a destination. Refine your vision through images and match with real-world locations via Skyscanner.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["AI Image Generation", "Iterative Prompting", "Destination Matching"]
+}
