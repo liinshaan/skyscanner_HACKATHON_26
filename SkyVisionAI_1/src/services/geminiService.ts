@@ -1,11 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { InferenceClient } from "@huggingface/inference";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export interface Destination {
   name: string;
   cityName: string;
-  iataCode: string; // Used for Skyscanner lookup
+  iataCode: string;
   matchPercentage: number;
   price: number;
   description: string;
@@ -74,13 +75,7 @@ export async function generateTravelConcept(keywords: string[], origin: string, 
 
 export async function generateKeywordSuggestions(currentKeywords: string[]): Promise<string[]> {
   if (currentKeywords.length === 0) {
-    return [
-      'Beach',
-      'Mountains',
-      'Adventure',
-      'Relaxation',
-      'Culture'
-    ];
+    return ['Beach', 'Mountains', 'Adventure', 'Relaxation', 'Culture'];
   }
 
   const prompt = `Based on these travel keywords: ${currentKeywords.join(", ")}, suggest 5 more related, specific, and evocative travel-related words or short phrases that would help refine a travel search. Return ONLY a JSON array of strings.`;
@@ -105,95 +100,28 @@ export async function generateKeywordSuggestions(currentKeywords: string[]): Pro
   }
 }
 
-export async function generateHeroImage(prompt: string, baseImage?: string): Promise<string> {
+export async function generateHeroImage(prompt: string): Promise<string> {
   const hfToken = import.meta.env.VITE_HUGGINGFACE_API_TOKEN;
-  
+
   if (!hfToken) {
-    console.error("Hugging Face API token missing!");
-    throw new Error("Hugging Face API token not found. Please configure VITE_HUGGINGFACE_API_TOKEN in the Secrets panel.");
+    throw new Error("Hugging Face API token not found. Please configure VITE_HUGGINGFACE_API_TOKEN.");
   }
 
-  // Stable Diffusion 1.5 is extremely reliable on the Inference API
-  const model = "runwayml/stable-diffusion-v1-5"; 
-  const url = `https://api-inference.huggingface.co/models/${model}`;
+  const client = new InferenceClient(hfToken);
 
-  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const finalPrompt = `Professional travel photography, high resolution, cinematic lighting, realistic: ${prompt}`;
 
-  const callHF = async (retryCount = 0): Promise<Response> => {
-    let body: any;
-    let headers: Record<string, string> = {
-      Authorization: `Bearer ${hfToken}`,
-    };
+  const imageBlob = await client.textToImage({
+    provider: "fal-ai",
+    model: "baidu/ERNIE-Image",
+    inputs: finalPrompt,
+    parameters: { num_inference_steps: 5 },
+  });
 
-    const finalPrompt = `Professional travel photography, high resolution, cinematic lighting, realistic: ${prompt}`;
-
-    if (baseImage && retryCount === 0) {
-      // For img2img, many SD models on HF Inference API accept the image as a blob
-      // and the prompt as a header or inside a JSON inputs field.
-      // We'll try the standard image blob approach first.
-      try {
-        const base64Data = baseImage.split(',')[1];
-        const res = await fetch(`data:image/png;base64,${base64Data}`);
-        const blob = await res.blob();
-        
-        headers["x-prompt"] = finalPrompt; // Some models use this
-        // But for standard text-to-image fallback or simple Inference API:
-        body = blob; 
-        // Note: Standard HF Inference API for SD text2img uses JSON. 
-        // For actual img2img via Inference API, we often need a different endpoint or specialized format.
-        // To ensure success, we'll favor text2img with a strong prompt if img2img fails or is inconsistent.
-      } catch (e) {
-        body = JSON.stringify({ inputs: finalPrompt });
-        headers["Content-Type"] = "application/json";
-      }
-    } else {
-      body = JSON.stringify({ 
-        inputs: finalPrompt,
-        parameters: { guidance_scale: 7.5, num_inference_steps: 30 }
-      });
-      headers["Content-Type"] = "application/json";
-    }
-
-    const response = await fetch(url, {
-      headers,
-      method: "POST",
-      body: body,
-    });
-
-    if (response.status === 503 && retryCount < 8) {
-      const errorData = await response.json().catch(() => ({}));
-      const waitTime = Math.max((errorData.estimated_time || 5) * 1000, 3000);
-      console.log(`HF Model loading... retry ${retryCount + 1}. Waiting ${waitTime}ms`);
-      await sleep(waitTime);
-      return callHF(retryCount + 1);
-    }
-
-    return response;
-  };
-
-  try {
-    const response = await callHF();
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("HF API Error Response:", errorText);
-      throw new Error(`HF Error: ${response.status} - ${errorText}`);
-    }
-
-    const resultBlob = await response.blob();
-    if (!resultBlob.type.startsWith('image/')) {
-      throw new Error(`Invalid response type: ${resultBlob.type}`);
-    }
-
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(resultBlob);
-    });
-  } catch (error) {
-    console.error("Critical error in generateHeroImage:", error);
-    // Return a colorful placeholder so the UI doesn't break
-    return `https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&q=80&w=1200&h=600`;
-  }
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(imageBlob);
+  });
 }
